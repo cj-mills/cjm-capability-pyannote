@@ -1,0 +1,32 @@
+name: cjm-capability-pyannote
+channels:
+  - pytorch
+  - nvidia
+  - conda-forge
+  - defaults
+dependencies:
+  - python=3.12
+  - pip
+  - pip:
+    - torch
+    # Speaker diarization (community-1 pipeline; HF-GATED — accept the model's
+    # user conditions and provision a token in this env: hf auth login or
+    # HF_TOKEN. Model downloads into the standard HF cache on first load.)
+    - pyannote.audio>=4.0
+
+    # Result data noun (SpeakerDiarizationResult). Substrate (cjm-substrate)
+    # is AUTO-INJECTED by `cjm-ctl install-all` (schema v2), so it is not
+    # listed here.
+    - cjm-capability-primitives
+
+    # Shared capability utils (torch release/OOM)
+    - cjm-substrate-torch-utils
+
+    # Utilities
+    - fastcore
+
+    # Worker dependencies
+    - fastapi
+    - uvicorn
+    - psutil
+    - httpx

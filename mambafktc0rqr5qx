@@ -1,0 +1,9 @@
+torch
+pyannote.audio>=4.0
+cjm-capability-primitives
+cjm-substrate-torch-utils
+fastcore
+fastapi
+uvicorn
+psutil
+httpx
