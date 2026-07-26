@@ -157,6 +157,16 @@ class PyannoteDiarizationCapability(ToolCapability):
     def _release_pipeline(self) -> None:
         """Release the loaded pipeline (GPU memory back). RELOAD_TRIGGER target
         for model_id/device; on_disable / cleanup delegate here."""
+        if self._pipeline is not None and PYANNOTE_AVAILABLE:
+            try:
+                # Pipeline.to REFUSES device strings (unlike nn.Module.to, which
+                # release_model's generic move uses) — move off the GPU with a
+                # typed device and null the attr; release_model then skips the
+                # move and just runs gc + CUDA cache/sync.
+                self._pipeline.to(torch.device("cpu"))
+            except Exception as e:
+                self.logger.warning(f"pipeline .to(cpu) failed: {e}")
+            self._pipeline = None
         release_model(self, ["_pipeline"], device="cuda", logger=self.logger)
         self._pipeline = None
         self._loaded_device = None
