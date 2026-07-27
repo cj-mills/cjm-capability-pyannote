@@ -157,32 +157,27 @@ class PyannoteDiarizationCapability(ToolCapability):
     def _release_pipeline(self) -> None:
         """Release the loaded pipeline (GPU memory back). RELOAD_TRIGGER target
         for model_id/device; on_disable / cleanup delegate here."""
-        if self._pipeline is not None and PYANNOTE_AVAILABLE:
-            try:
-                # Pipeline.to REFUSES device strings (unlike nn.Module.to, which
-                # release_model's generic move uses) — move off the GPU with a
-                # typed device and null the attr; release_model then skips the
-                # move and just runs gc + CUDA cache/sync.
-                self._pipeline.to(torch.device("cpu"))
-            except Exception as e:
-                self.logger.warning(f"pipeline .to(cpu) failed: {e}")
-            self._pipeline = None
         release_model(self, ["_pipeline"], device="cuda", logger=self.logger)
         self._pipeline = None
         self._loaded_device = None
 
+    HINT_KEYS = ("num_speakers", "min_speakers", "max_speakers")  # Per-call speaker-count hints read from kwargs
+
     def diarize(
         self,
-        audio: str,                          # Path to the source audio to diarize (turn times index into THIS audio)
-        num_speakers: Optional[int] = None,  # Exact speaker count, when the source is known (per-call knowledge)
-        min_speakers: Optional[int] = None,  # Lower bound hint
-        max_speakers: Optional[int] = None,  # Upper bound hint
-        **kwargs                             # Provenance pass-through (unused by diarization compute)
+        audio: str,  # Path to the source audio to diarize (turn times index into THIS audio)
+        **kwargs     # Speaker-count hints (num_speakers/min_speakers/max_speakers) + provenance pass-through
     ) -> SpeakerDiarizationResult:  # Time-ordered anonymous speaker turns
         """Diarize source audio into time-ordered anonymous speaker turns.
 
-        Iterates the pipeline output via `itertracks(yield_label=True)` — the
-        stable surface across pyannote.audio 3.x (bare Annotation) and 4.x
+        The signature is `(audio, **kwargs)` to CONFORM TO THE PROTOCOL under
+        the substrate's surface-match PREFIX RULE (adapter binding compares
+        param lists; named params between `audio` and `**kwargs` break the
+        match — caught live 2026-07-26: the worker bound NO adapter). The
+        speaker-count hints are read from kwargs by name, the whisper/pysbd
+        family convention. Iterates the pipeline output via
+        `itertracks(yield_label=True)` — the stable surface across
+        pyannote.audio 3.x (bare Annotation) and 4.x
         (DiarizeOutput.speaker_diarization). Turns keep source coordinates;
         overlapping turns pass through untouched (overlapped speech is
         signal the downstream join wants)."""
@@ -198,9 +193,7 @@ class PyannoteDiarizationCapability(ToolCapability):
             )
         self._load_pipeline()
 
-        hints = {k: v for k, v in (("num_speakers", num_speakers),
-                                   ("min_speakers", min_speakers),
-                                   ("max_speakers", max_speakers)) if v is not None}
+        hints = {k: kwargs[k] for k in self.HINT_KEYS if kwargs.get(k) is not None}
         output = self._pipeline(audio, **hints)
         annotation = getattr(output, "speaker_diarization", output)
         turns: List[SpeakerTurn] = [
