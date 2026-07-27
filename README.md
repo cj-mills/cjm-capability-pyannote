@@ -1,30 +1,21 @@
 # cjm-capability-pyannote
 
-A [pyannote.audio](https://github.com/pyannote/pyannote-audio) speaker-diarization
-capability for the [cjm-substrate](https://github.com/cj-mills/cjm-substrate)
-runtime: source audio in, **anonymous** time-ranged speaker turns out
-(`SpeakerDiarizationResult` — wire-registered, typed across the worker boundary).
+<!-- generated from the context graph by `cjm-context-graph readme` — do not edit by hand; edit the graph (the urge to hand-edit = move it on-graph) -->
 
-- Default pipeline: [`pyannote/speaker-diarization-community-1`](https://hf.co/pyannote/speaker-diarization-community-1)
-  (**HF-gated**: accept the model's user conditions and provision a token in the
-  worker env — `hf auth login` or `HF_TOKEN`; the model downloads into the
-  standard HF cache on first load).
-- Task channel: `task=speaker_diarization` via
-  [cjm-speaker-diarization-adapter-interface](https://github.com/cj-mills/cjm-speaker-diarization-adapter-interface)
-  (surface match: `diarize` + `get_current_config`).
-- Speaker-count hints are **per-call** knowledge, not config:
-  `diarize(audio, num_speakers=2)` / `min_speakers` / `max_speakers`.
-- Turn times index into the caller's original audio; overlapping turns are
-  signal (overlapped speech). Cluster labels (`SPEAKER_00`, …) are
-  result-scoped — mapping them to named identities is downstream human
-  judgment (the correction TUI's assignment lane), never this capability's job.
+Speaker-diarization capability backed by pyannote.audio (community-1) — full-source decoded-PCM audio → time-ranged anonymous speaker turns (SPEAKER_00-style cluster labels, never identities), implementing the speaker-diarization adapter interface; pure compute — caching lives in the generic adapter. Default-on rung in the transcription workflow; the correction TUI's assign lane consumes the turns.
 
-## Install (as a substrate capability)
+## Modules
 
-Add an entry to your workspace `capabilities.yaml` (env file + package +
-`cjm-capability-primitives` interface lib + the generic diarization adapter),
-then:
+- **`cjm_capability_pyannote.__init__`**
+- **`cjm_capability_pyannote.capability`** — Speaker-diarization tool capability using pyannote.audio (session-D DECs 18d7de80 + d6df3a8e): source audio in, ANONYMOUS time-ranged speaker turns out — the machine half of speaker assignment; identity stays the correction TUI's human lane (DEC 44afb2df).
 
-```bash
-cjm-ctl install-all --capabilities capabilities.yaml
-```
+## API
+
+### `cjm_capability_pyannote.capability`
+
+- `PyannoteConfig` _class_ — Configuration for the pyannote diarization pipeline.
+- `PyannoteDiarizationCapability` _class_ — Speaker-diarization tool capability wrapping a pyannote.audio Pipeline.
+
+## Dependencies
+
+**Depends on:** `cjm-capability-primitives`, `cjm-substrate`, `cjm-substrate-torch-utils`, `pyannote.audio`
