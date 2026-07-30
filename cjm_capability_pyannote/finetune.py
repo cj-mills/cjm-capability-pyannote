@@ -373,7 +373,12 @@ def _build_spine_files(
         return {
             "uri": uri,
             "database": "cjm-flywheel",
-            "scope": "file",  # labels are file-scoped (Task.prepare_data reads this per annotation)
+            # MUST be "global": MultiLabelSegmentation targets index by
+            # global_label_idx, which prepare_data populates only at global
+            # scope — any narrower scope leaves -1, silently training every
+            # span into the LAST class column (caught live 2026-07-29: inhale
+            # head trained all-zero, tail probabilities ~1e-5)
+            "scope": "global",
             "audio": str(audio_path),
             "annotated": Timeline([window], uri=uri),
             "annotation": build_annotation(uri, window, real_only),
@@ -399,6 +404,25 @@ def _build_spine_files(
         "dev": label_counts(dev_file["annotation"]),
     }
     return train_file, dev_file, counts
+
+
+def encounter_class_order(
+    files: List[Dict[str, Any]]  # Protocol files in prepare_data iteration order (train then dev)
+) -> List[str]:  # Labels by first occurrence across all annotations
+    """The class order upstream target-building actually uses.
+
+    Task.prepare_data accumulates global labels in ENCOUNTER order (first
+    occurrence across files, chronological within each file), and
+    MultiLabelSegmentation.prepare_chunk indexes target columns by that order
+    while classes-list keeps the caller's order — there is NO remapping
+    between the two. Passing classes in any other order silently permutes the
+    training targets, so the task's classes MUST be exactly this list."""
+    seen: List[str] = []
+    for f in files:
+        for _seg, _track, label in f["annotation"].itertracks(yield_label=True):
+            if label not in seen:
+                seen.append(label)
+    return seen
 
 
 class _DatasetProtocol(SegmentationProtocol):
@@ -596,6 +620,16 @@ def run_finetune(
         spine_counts.append(counts)
     if not train_files:
         raise CapabilityInputError("No spine contributed training data", fields_invalid=["dataset_manifest"])
+
+    # Re-order (and prune) the class list to upstream's encounter order — the
+    # only order under which training targets land in the right columns
+    ordered = encounter_class_order(train_files + dev_files)
+    dropped = [c for c in classes if c not in ordered]
+    if dropped:
+        log.warning(f"Classes with no spans in any window dropped: {dropped}")
+    classes = ordered
+    for f in train_files + dev_files:
+        f["classes"] = list(classes)
 
     protocol = _DatasetProtocol(
         train_files, dev_files,

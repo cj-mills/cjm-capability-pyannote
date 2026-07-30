@@ -7,9 +7,9 @@ import json
 import pytest
 
 from cjm_capability_pyannote.finetune import (_build_spine_files, _DatasetProtocol, _eligible_spines,
-                                              FinetuneConfig, load_dataset, new_training_run_id,
-                                              PyannoteSegmentationFinetuneAdapter, run_finetune,
-                                              select_classes, TrainingRunManifest)
+                                              encounter_class_order, FinetuneConfig, load_dataset,
+                                              new_training_run_id, PyannoteSegmentationFinetuneAdapter,
+                                              run_finetune, select_classes, TrainingRunManifest)
 from cjm_substrate.core.errors import CapabilityInputError
 from cjm_substrate.core.workspace import Workspace
 
@@ -152,7 +152,9 @@ def test_build_spine_files_windows_and_real_only(dataset_dir, tmp_path):
     assert list(train_file["annotated"])[0].end == pytest.approx(90.0)
     assert list(dev_file["annotated"])[0] .start == pytest.approx(90.0)
     assert train_file["classes"] == classes and dev_file["classes"] == classes
-    assert train_file["scope"] == "file"
+    # global scope is LOAD-BEARING: narrower scopes leave global_label_idx at
+    # -1 and upstream trains every span into the last class column
+    assert train_file["scope"] == "global"
 
     # train: 2 inhales + speech regions cropped to [0, 90); the 'empty' span is no class
     assert counts["train"]["inhale"] == 2
@@ -170,6 +172,19 @@ def test_build_spine_files_windows_and_real_only(dataset_dir, tmp_path):
     proto = _DatasetProtocol([train_file], [dev_file])
     assert [f["uri"] for f in proto.train()] == [train_file["uri"]]
     assert [f["uri"] for f in proto.development()] == [dev_file["uri"]]
+
+
+def test_encounter_class_order_is_chronological_first_occurrence(dataset_dir, tmp_path):
+    """The trained class list must follow upstream's encounter order (first
+    occurrence, chronological within each file) — the speech region at t=0
+    precedes the first inhale, so 'speech' leads despite being appended last."""
+    manifest, events, regions = load_dataset(dataset_dir / "manifest.json")
+    cfg = FinetuneConfig(min_class_count=2)
+    classes = select_classes(manifest, cfg)
+    spine = _eligible_spines(manifest)[0]
+    train_file, dev_file, _ = _build_spine_files(spine, events, regions, classes, cfg,
+                                                 tmp_path / "a.wav")
+    assert encounter_class_order([train_file, dev_file]) == ["speech", "inhale"]
 
 
 def test_run_finetune_validates_holdout_and_workspace(dataset_dir, tmp_path, monkeypatch):
