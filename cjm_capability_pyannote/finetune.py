@@ -824,6 +824,10 @@ def main(argv: Optional[List[str]] = None) -> int:
     parser.add_argument("--num-workers", dest="num_workers", type=int)
     parser.add_argument("--holdout-fraction", dest="holdout_fraction", type=float)
     parser.add_argument("--min-class-count", dest="min_class_count", type=int)
+    parser.add_argument("--exclude-labels", dest="exclude_labels", nargs="+",
+                        help="Labels never trained as classes (hard negatives); "
+                             "surfaced for the f2d15413 promotion decision — labels "
+                             "past --min-class-count auto-train unless listed here")
     parser.add_argument("--no-speech-class", dest="include_speech_class", action="store_false", default=None)
     parser.add_argument("--no-prepare-wav", dest="prepare_wav", action="store_false", default=None)
     parser.add_argument("--seed", type=int)
