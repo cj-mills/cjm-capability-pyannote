@@ -7,7 +7,7 @@ import pytest
 
 from cjm_capability_pyannote.propose import (load_training_run, new_proposal_set_id,
                                              ProposalSetManifest, ProposeConfig, run_propose,
-                                             spans_from_scores)
+                                             spans_from_scores, tier2_extras)
 from cjm_substrate.core.errors import CapabilityInputError
 from cjm_substrate.core.workspace import Workspace
 
@@ -67,8 +67,17 @@ def test_proposal_manifest_shape_and_ws_tokens(tmp_path):
     out = m.save(tmp_path / "proposals" / "propset_x" / "manifest.json", workspace=ws)
     data = json.loads(out.read_text())
     assert data["format"] == "cjm-capability-pyannote/proposal-set-manifest"
-    assert data["version"] == "0.1.0"
+    assert data["version"] == "0.2.0"
     assert data["training_run_manifest"] == "${WS}/training-runs/t/manifest.json"
+    # Single-tier set: the tier2_counts key stays OUT of the serialized shape.
+    assert "tier2_counts" not in data
+    dual = ProposalSetManifest(
+        proposal_set_id="propset_y", created_at=1.0,
+        config={"onset": 0.5, "tier2_onset": 0.35},
+        training_run_manifest=str(tmp_path / "training-runs" / "t" / "manifest.json"),
+        training_run_id="trainrun_t", tier2_counts={"inhale": 3},
+    )
+    assert dual.to_dict()["tier2_counts"] == {"inhale": 3}
 
 
 def test_load_training_run_rejects_wrong_format(tmp_path):
@@ -94,3 +103,19 @@ def test_run_propose_input_errors(tmp_path, monkeypatch):
 def test_proposal_set_id_pattern():
     pid = new_proposal_set_id()
     assert pid.startswith("propset_") and len(pid.split("_")) == 4
+
+
+def test_tier2_extras_non_overlap_selection():
+    """3a5cb858 shape A: the audition tier keeps only floor candidates that
+    overlap NO tier-1 span — an overlapping candidate is the same event
+    widened by the lower hysteresis, and tier-1 already carries it."""
+    tier1 = [(10.0, 11.0, 0.8), (20.0, 21.5, 0.9)]
+    candidates = [(9.8, 11.2, 0.8),    # widened tier-1 event -> dropped
+                  (15.0, 15.6, 0.42),  # genuine sub-threshold extra -> kept
+                  (21.4, 22.0, 0.45),  # straddles a tier-1 tail -> dropped
+                  (30.0, 30.4, 0.38)]  # extra -> kept
+    assert tier2_extras(tier1, candidates) == [(15.0, 15.6, 0.42),
+                                               (30.0, 30.4, 0.38)]
+    # No tier-1 spans: every candidate is an extra; no candidates: empty.
+    assert tier2_extras([], candidates) == candidates
+    assert tier2_extras(tier1, []) == []

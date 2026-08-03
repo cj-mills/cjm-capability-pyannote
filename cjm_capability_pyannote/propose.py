@@ -65,10 +65,11 @@ class ProposalSetManifest:
     window: Dict[str, float] = field(default_factory=dict)  # Proposed-over window [start, end] in source seconds
     classes: List[str] = field(default_factory=list)      # Classes proposals were generated for
     files: Dict[str, str] = field(default_factory=dict)   # Set-relative data files (proposals)
-    counts: Dict[str, int] = field(default_factory=dict)  # Proposals per class
+    counts: Dict[str, int] = field(default_factory=dict)  # Tier-1 proposals per class (the operating-point contract)
+    tier2_counts: Optional[Dict[str, int]] = None         # Audition-tier proposals per class; None = single-tier set
 
     FORMAT: str = field(default="cjm-capability-pyannote/proposal-set-manifest", repr=False)  # Format tag
-    VERSION: str = field(default="0.1.0", repr=False)                                          # Schema version
+    VERSION: str = field(default="0.2.0", repr=False)  # Schema version (0.2.0: rows carry tier; tierless = all tier-1)
 
     def to_dict(self) -> Dict[str, Any]:  # Plain-dict form for JSON serialization
         """Serialize to a plain dict."""
@@ -86,6 +87,8 @@ class ProposalSetManifest:
             "classes": list(self.classes),
             "files": dict(self.files),
             "counts": dict(self.counts),
+            **({"tier2_counts": dict(self.tier2_counts)}
+               if self.tier2_counts is not None else {}),
         }
 
     def save(
@@ -128,6 +131,17 @@ class ProposeConfig:
             SCHEMA_DESC: "Frame probability below which an open span closes (hysteresis low-water mark).",
         }
     )
+    tier2_onset: Optional[float] = field(
+        default=None,
+        metadata={
+            SCHEMA_TITLE: "Tier-2 Audition Floor",
+            SCHEMA_DESC: "Optional second extraction floor (symmetric hysteresis, mirroring "
+                         "the onset/offset convention). Spans found here that do NOT overlap "
+                         "a tier-1 span of the same label record with tier=2: audition-only "
+                         "in the correction lane, NEVER carve cuts (WORK ITEM 3a5cb858 "
+                         "shape A). None = single-tier legacy set.",
+        }
+    )
     min_duration_on: float = field(
         default=0.05,
         metadata={
@@ -147,6 +161,16 @@ class ProposeConfig:
         metadata={
             SCHEMA_TITLE: "Inference Chunk Duration",
             SCHEMA_DESC: "Sliding-window chunk length in seconds (match the training chunk).",
+        }
+    )
+    step: Optional[float] = field(
+        default=None,
+        metadata={
+            SCHEMA_TITLE: "Inference Step",
+            SCHEMA_DESC: "Sliding-window step in seconds; None = duration/2 (the legacy grid). "
+                         "The 9bdfeeeb re-score showed misses peaking >0.5 centered that the "
+                         "10s/5s grid scored at unlucky offsets — a denser step recovers "
+                         "window-placement artifacts.",
         }
     )
     batch_size: int = field(
@@ -243,6 +267,21 @@ def spans_from_scores(
     return [(s, e, score) for s, e, score in merged if e - s >= min_duration_on]
 
 
+def tier2_extras(
+    tier1: List[Tuple[float, float, float]],       # Operating-point spans for one label
+    candidates: List[Tuple[float, float, float]],  # Floor-extraction spans for the same label
+) -> List[Tuple[float, float, float]]:  # Candidates that overlap NO tier-1 span
+    """Select the audition tier: floor-extraction spans that do not overlap any
+    operating-point span of the same label (WORK ITEM 3a5cb858 shape A).
+
+    A floor candidate that overlaps a tier-1 span is the SAME event widened by
+    the lower hysteresis — tier-1 already carries it; the non-overlapping
+    remainder is exactly the below-threshold miss channel the driver auditions
+    instead of manually splitting (70% of the 9bdfeeeb misses were near-misses)."""
+    return [(s, e, score) for s, e, score in candidates
+            if not any(s < t_end and e > t_start for t_start, t_end, _ in tier1)]
+
+
 def run_propose(
     training_run: Union[str, Path],           # TrainingRunManifest json or run directory (the model pointer)
     source: Union[str, Path],                 # Source audio to propose over (spine coordinates)
@@ -312,7 +351,8 @@ def run_propose(
     device = cfg.device
     if device == "auto":
         device = "cuda" if torch.cuda.is_available() else "cpu"
-    inference = Inference(model, duration=cfg.duration, step=cfg.duration / 2.0,
+    step_s = cfg.step if cfg.step is not None else cfg.duration / 2.0
+    inference = Inference(model, duration=cfg.duration, step=step_s,
                           batch_size=cfg.batch_size, device=torch.device(device))
     log.info(f"Proposing {cfg.classes} over [{start:.1f}, {end:.1f}]s of {source_path.name} "
              f"with {run_manifest.get('run_id')} on {device}")
@@ -324,23 +364,41 @@ def run_propose(
     set_dir = ws.root / PROPOSALS_DIR / set_id
     set_dir.mkdir(parents=True)
     counts: Dict[str, int] = {}
+    tier2_counts: Dict[str, int] = {}
+
+    def _write_rows(f, label, spans, tier):
+        for span_start, span_end, score in spans:
+            f.write(json.dumps({
+                "proposal_id": str(uuid.uuid4()),
+                "label": label,
+                "start_time": round(max(start, span_start), 4),
+                "end_time": round(min(end, span_end), 4),
+                "score": round(score, 4),
+                "tier": tier,
+            }) + "\n")
+
     with open(set_dir / "proposals.jsonl", "w") as f:
         for label in cfg.classes:
             column = trained_classes.index(label)
+            probs = [float(v) for v in scores.data[:, column]]
             spans = spans_from_scores(
-                times, frames.step, [float(v) for v in scores.data[:, column]],
+                times, frames.step, probs,
                 onset=cfg.onset, offset=cfg.offset,
                 min_duration_on=cfg.min_duration_on, min_duration_off=cfg.min_duration_off,
             )
             counts[label] = len(spans)
-            for span_start, span_end, score in spans:
-                f.write(json.dumps({
-                    "proposal_id": str(uuid.uuid4()),
-                    "label": label,
-                    "start_time": round(max(start, span_start), 4),
-                    "end_time": round(min(end, span_end), 4),
-                    "score": round(score, 4),
-                }) + "\n")
+            _write_rows(f, label, spans, 1)
+            if cfg.tier2_onset is not None:
+                # 3a5cb858 shape A: ONE scoring pass serves both tiers — the
+                # floor extraction reuses the frame probs; symmetric hysteresis
+                # mirrors the onset/offset convention at the operating point.
+                extras = tier2_extras(spans, spans_from_scores(
+                    times, frames.step, probs,
+                    onset=cfg.tier2_onset, offset=cfg.tier2_onset,
+                    min_duration_on=cfg.min_duration_on, min_duration_off=cfg.min_duration_off,
+                ))
+                tier2_counts[label] = len(extras)
+                _write_rows(f, label, extras, 2)
 
     manifest = ProposalSetManifest(
         proposal_set_id=set_id,
@@ -358,6 +416,7 @@ def run_propose(
         classes=list(cfg.classes),
         files={"proposals": "proposals.jsonl"},
         counts=counts,
+        tier2_counts=(tier2_counts if cfg.tier2_onset is not None else None),
     )
     manifest.save(set_dir / "manifest.json", workspace=ws)
     log.info(f"Proposal set {set_id} complete: {counts} -> {set_dir}")
@@ -387,6 +446,12 @@ def main(argv: Optional[List[str]] = None) -> int:
     parser.add_argument("--min-duration-on", dest="min_duration_on", type=float)
     parser.add_argument("--min-duration-off", dest="min_duration_off", type=float)
     parser.add_argument("--duration", type=float)
+    parser.add_argument("--step", type=float,
+                        help="Inference step in seconds (default: duration/2 — the 9bdfeeeb "
+                             "window-grid lever)")
+    parser.add_argument("--tier2-onset", dest="tier2_onset", type=float,
+                        help="Audition-tier extraction floor (3a5cb858 shape A); "
+                             "omit for a single-tier set")
     parser.add_argument("--batch-size", dest="batch_size", type=int)
     parser.add_argument("--device")
     parser.add_argument("--no-prepare-wav", dest="prepare_wav", action="store_false", default=None)
@@ -404,6 +469,8 @@ def main(argv: Optional[List[str]] = None) -> int:
     )
     print(json.dumps({"proposal_set_id": result["proposal_set_id"],
                       "counts": result["counts"],
+                      **({"tier2_counts": result["tier2_counts"]}
+                         if result.get("tier2_counts") else {}),
                       "window": result["window"]}, indent=2))
     return 0
 
