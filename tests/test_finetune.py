@@ -203,3 +203,18 @@ def test_adapter_input_errors(adapter):
         adapter.finetune(123)
     with pytest.raises(CapabilityInputError):
         adapter.finetune("/nonexistent/manifest.json")
+
+
+def test_eligible_spines_include_filter():
+    manifest = {"spines": [
+        {"eligible": True, "skeleton_hash": "sha256:aaaa1111"},
+        {"eligible": True, "skeleton_hash": "sha256:bbbb2222"},
+        {"eligible": False, "skeleton_hash": "sha256:cccc3333"},
+    ]}
+    assert len(_eligible_spines(manifest)) == 2
+    kept = _eligible_spines(manifest, ["bbbb"])
+    assert [s["skeleton_hash"] for s in kept] == ["sha256:bbbb2222"]
+    # scheme-prefixed form matches too; an ineligible spine never passes the filter
+    assert _eligible_spines(manifest, ["sha256:aaaa"])
+    assert _eligible_spines(manifest, ["cccc"]) == []
+    assert _eligible_spines(manifest, ["dddd"]) == []

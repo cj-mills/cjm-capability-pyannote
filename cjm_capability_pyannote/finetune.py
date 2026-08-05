@@ -212,6 +212,16 @@ class FinetuneConfig:
                          "insert class — its spans are evidence of nothing, not an event.",
         }
     )
+    include_spines: List[str] = field(
+        default_factory=list,
+        metadata={
+            SCHEMA_TITLE: "Included Spines",
+            SCHEMA_DESC: "Skeleton-hash prefixes of eligible spines to train on (empty = all). "
+                         "Co-eligible spines over the same audio carry spine-scoped annotation "
+                         "layers — scope a run to its layer's anchoring spine so another "
+                         "spine's window does not train the classes as false negatives.",
+        }
+    )
     include_speech_class: bool = field(
         default=True,
         metadata={
@@ -289,9 +299,24 @@ def select_classes(
     return classes
 
 
-def _eligible_spines(manifest: Dict[str, Any]) -> List[Dict[str, Any]]:
-    """The gate-eligible spines recorded at extraction time (watermark holders)."""
-    return [s for s in manifest.get("spines", []) if s.get("eligible")]
+def _eligible_spines(
+    manifest: Dict[str, Any],            # Resolved dataset manifest
+    include: Optional[List[str]] = None  # Skeleton-hash prefixes to keep (None/[] = all)
+) -> List[Dict[str, Any]]:
+    """The gate-eligible spines recorded at extraction time (watermark holders).
+
+    include narrows to spines whose skeleton hash starts with any given prefix
+    (with or without the 'sha256:' scheme) — the seam that keeps a co-eligible
+    spine over the SAME audio from training another spine's classes as false
+    negatives (annotation layers are spine-scoped; the waveform is not)."""
+    spines = [s for s in manifest.get("spines", []) if s.get("eligible")]
+    if not include:
+        return spines
+    wanted = [p.split(":", 1)[-1] for p in include]
+    kept = [s for s in spines
+            if any((s.get("skeleton_hash") or "").split(":", 1)[-1].startswith(p)
+                   for p in wanted)]
+    return kept
 
 
 def _prepare_wav(
@@ -584,11 +609,12 @@ def run_finetune(
     started = time.time()
     dataset, events, regions = load_dataset(dataset_manifest)
     classes = select_classes(dataset, cfg)
-    spines = _eligible_spines(dataset)
+    spines = _eligible_spines(dataset, cfg.include_spines)
     if not spines:
         raise CapabilityInputError(
-            f"Dataset {dataset.get('dataset_id')} has no eligible spines to train on",
-            fields_invalid=["dataset_manifest"],
+            f"Dataset {dataset.get('dataset_id')} has no eligible spines to train on"
+            + (f" under include_spines={cfg.include_spines}" if cfg.include_spines else ""),
+            fields_invalid=["dataset_manifest", "include_spines"],
         )
 
     run_id = new_training_run_id()
@@ -828,6 +854,10 @@ def main(argv: Optional[List[str]] = None) -> int:
                         help="Labels never trained as classes (hard negatives); "
                              "surfaced for the f2d15413 promotion decision — labels "
                              "past --min-class-count auto-train unless listed here")
+    parser.add_argument("--include-spines", dest="include_spines", nargs="+",
+                        help="Skeleton-hash prefixes of eligible spines to train on "
+                             "(empty = all); scopes a run to an annotation layer's "
+                             "anchoring spine (DEC dbdb5a94)")
     parser.add_argument("--no-speech-class", dest="include_speech_class", action="store_false", default=None)
     parser.add_argument("--no-prepare-wav", dest="prepare_wav", action="store_false", default=None)
     parser.add_argument("--seed", type=int)
