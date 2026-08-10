@@ -48,6 +48,14 @@ except ImportError:
     TRAIN_AVAILABLE = False
     SegmentationProtocol = object  # class-def base fallback so the module imports without the stack
 
+# Adapter scoping protocol (DEC c0378082 — the propose.py convention): pins
+# auto-bind to diarize-surfaced workers; None outside a worker env, where
+# manifest generation refuses to register.
+try:
+    from cjm_speaker_diarization_adapter_interface.adapter import SpeakerDiarizationToolProtocol
+except ImportError:
+    SpeakerDiarizationToolProtocol = None
+
 # Format tag of the consumed dataset manifest (born workflow-local in
 # cjm-transcript-correction-core; consumed BY POINTER, DEC 16159e09)
 DATASET_MANIFEST_FORMAT = "cjm-transcript-correction-core/dataset-manifest"
@@ -752,11 +760,19 @@ class PyannoteSegmentationFinetuneAdapter(ToolCapability):
     first trainable instance — `finetune(dataset_manifest, **kwargs)` keeps the
     surface-match PREFIX RULE shape so the generic interface lib (minted at
     n=2 trainable capabilities) binds without a signature change. Long runs
-    ride the same worker regime as long inference runs."""
+    ride the same worker regime as long inference runs. EXPOSED through the
+    CR-17 pt 2 task channel per DEC c0378082 — the X_finetune naming pairs it
+    with the audio_event_detection task it trains for; the bound tool instance
+    is accepted per the worker binding convention and unused."""
 
     config_class = FinetuneConfig
+    task_name = "audio_event_detection_finetune"
+    required_tool_protocol = SpeakerDiarizationToolProtocol
 
-    def __init__(self):
+    def __init__(
+        self,
+        capability_instance: Any = None  # Bound tool instance (worker binding convention; unused)
+    ):
         """Initialize the segmentation-finetune adapter."""
         self.logger = logging.getLogger(f"{__name__}.{type(self).__name__}")
         self.config: Optional[FinetuneConfig] = None
@@ -817,9 +833,15 @@ class PyannoteSegmentationFinetuneAdapter(ToolCapability):
                 f"Dataset manifest does not exist: {dataset_manifest}",
                 fields_invalid=["dataset_manifest"],
             )
-        if self.config is None:
-            self._apply_config(None)
-        return run_finetune(dataset_manifest, config=self.config,
+        # Per-call config (DEC c0378082): task-channel calls carry FinetuneConfig
+        # as a kwarg; an applied capability config stays the fallback.
+        if kwargs.get("config") is not None:
+            cfg = dict_to_config(FinetuneConfig, kwargs["config"])
+        else:
+            if self.config is None:
+                self._apply_config(None)
+            cfg = self.config
+        return run_finetune(dataset_manifest, config=cfg,
                             workspace=kwargs.get("workspace"), logger=self.logger)
 
     def is_available(self) -> bool:  # True if the training stack is importable

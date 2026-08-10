@@ -32,6 +32,16 @@ try:
 except ImportError:
     PROPOSE_AVAILABLE = False
 
+# Adapter scoping protocol (DEC 1cfe6d0f): the speaker-diarization interface
+# lib is installed beside the tool in worker envs — required_tool_protocol
+# REUSES its protocol to pin auto-bind to diarize-surfaced workers (empty
+# protocol members would auto-bind this adapter to EVERY capability). None
+# outside a worker env; manifest generation refuses a None protocol there.
+try:
+    from cjm_speaker_diarization_adapter_interface.adapter import SpeakerDiarizationToolProtocol
+except ImportError:
+    SpeakerDiarizationToolProtocol = None
+
 # Format tag of the consumed training-run manifest (the model pointer)
 TRAINING_RUN_MANIFEST_FORMAT = "cjm-capability-pyannote/training-run-manifest"
 
@@ -195,9 +205,15 @@ class ProposeConfig:
 
 
 def load_training_run(
-    manifest_path: Union[str, Path]  # TrainingRunManifest json (or its run directory)
+    manifest_path: Union[str, Path],  # TrainingRunManifest json (or its run directory)
+    workspace: Optional[Workspace] = None  # Caller-resolved Workspace for the ${WS} fallback
 ) -> Tuple[Dict[str, Any], Path]:  # (resolved manifest, checkpoint path)
-    """Load a TrainingRunManifest and resolve its checkpoint artifact."""
+    """Load a TrainingRunManifest and resolve its checkpoint artifact.
+
+    7839fa98: the two-level layout (training-runs/<run>/manifest.json) anchors
+    the primary ${WS} candidate one level too deep, so the workspace fallback
+    is load-bearing — a caller's explicitly resolved workspace must reach it
+    instead of being re-resolved from env/cwd."""
     p = Path(manifest_path)
     if p.is_dir():
         p = p / "manifest.json"
@@ -215,7 +231,7 @@ def load_training_run(
             f"{TRAINING_RUN_MANIFEST_FORMAT!r})",
             fields_invalid=["training_run"],
         )
-    resolved = resolve_recorded_tree(data, p)
+    resolved = resolve_recorded_tree(data, p, workspace=workspace)
     checkpoint = Path(resolved.get("artifact", {}).get("path", ""))
     if not checkpoint.is_file():
         raise CapabilityInputError(
@@ -323,7 +339,7 @@ def run_propose(
         )
 
     started = time.time()
-    run_manifest, checkpoint = load_training_run(training_run)
+    run_manifest, checkpoint = load_training_run(training_run, workspace=ws)
     trained_classes = list(run_manifest.get("classes", []))
     unknown = [c for c in cfg.classes if c not in trained_classes]
     if unknown:
@@ -473,6 +489,58 @@ def main(argv: Optional[List[str]] = None) -> int:
                          if result.get("tier2_counts") else {}),
                       "window": result["window"]}, indent=2))
     return 0
+
+
+class PyannoteAudioEventDetectionAdapter:
+    """audio_event_detection task adapter over `run_propose` (DEC 1cfe6d0f).
+
+    Capability-INTERNAL (the d02a38d4 posture — no interface lib until n=2
+    detectors, kit N-rule 2e0928f2): binds in-worker beside the diarization
+    tool via the CR-17 pt 2 task channel; the TUI invokes
+    `execute_task("audio_event_detection", "propose", ...)` as a batch
+    pre-stage. The bound tool instance is accepted per the worker binding
+    convention and UNUSED — `run_propose` loads its own checkpoint from the
+    training-run pointer. `ProposeConfig` rides as a per-call kwarg, never
+    capability config."""
+
+    task_name = "audio_event_detection"
+    required_tool_protocol = SpeakerDiarizationToolProtocol
+
+    def __init__(
+        self,
+        capability_instance: Any = None  # Bound tool instance (binding convention; unused)
+    ):
+        """Bind beside the worker's tool capability."""
+        self.logger = logging.getLogger(f"{__name__}.{type(self).__name__}")
+
+    def propose(
+        self,
+        training_run: str,  # TrainingRunManifest json or run directory (the model pointer)
+        source: str,        # Source audio to propose over (spine coordinates)
+        **kwargs            # start/end window, source_id/skeleton_hash join keys, config dict, workspace override
+    ) -> Dict[str, Any]:  # The saved ProposalSetManifest as a dict
+        """Generate event-span proposals (training-run pointer in, manifest out).
+
+        The `(training_run, source, **kwargs)` shape keeps the surface-match
+        PREFIX RULE satisfiable by a future event-detection interface lib
+        without a signature change (the finetune adapter's convention)."""
+        if not isinstance(training_run, str) or not training_run:
+            raise CapabilityInputError(
+                f"Unsupported training_run input: {training_run!r}; expected a "
+                "non-empty path string",
+                fields_invalid=["training_run"],
+            )
+        end = kwargs.get("end")
+        return run_propose(
+            training_run, source,
+            config=kwargs.get("config"),
+            start=float(kwargs.get("start", 0.0)),
+            end=float(end) if end is not None else None,
+            source_id=kwargs.get("source_id"),
+            skeleton_hash=kwargs.get("skeleton_hash"),
+            workspace=kwargs.get("workspace"),
+            logger=self.logger,
+        )
 
 
 if __name__ == "__main__":

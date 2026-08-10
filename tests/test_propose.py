@@ -119,3 +119,46 @@ def test_tier2_extras_non_overlap_selection():
     # No tier-1 spans: every candidate is an extra; no candidates: empty.
     assert tier2_extras([], candidates) == candidates
     assert tier2_extras(tier1, []) == []
+
+
+def test_adapter_binding_convention_and_input_errors():
+    """DEC 1cfe6d0f: the audio_event_detection adapter binds `Cls(capability_instance)`
+    (the duck-typed worker convention) and refuses a non-path training_run with a
+    typed input error before touching the inference stack."""
+    from cjm_capability_pyannote.propose import PyannoteAudioEventDetectionAdapter
+    assert PyannoteAudioEventDetectionAdapter.task_name == "audio_event_detection"
+    adapter = PyannoteAudioEventDetectionAdapter(object())
+    with pytest.raises(CapabilityInputError):
+        adapter.propose("", "audio.wav")
+    with pytest.raises(CapabilityInputError):
+        adapter.propose(None, "audio.wav")
+
+
+def test_load_training_run_explicit_workspace(tmp_path, monkeypatch):
+    """7839fa98: the explicit workspace reaches the ${WS} fallback — the two-level
+    training-runs/<run>/manifest.json layout anchors its primary candidate one
+    level too deep, so from a neutral cwd only the caller's workspace resolves
+    the checkpoint (env/cwd re-resolution loses it)."""
+    from cjm_capability_pyannote.propose import TRAINING_RUN_MANIFEST_FORMAT
+    ws_root = tmp_path / "space"
+    ws_root.mkdir()
+    (ws_root / "cjm-workspace.yaml").write_text("name: t\n")
+    run_dir = ws_root / "training-runs" / "run_001"
+    run_dir.mkdir(parents=True)
+    ckpt = run_dir / "model.ckpt"
+    ckpt.write_text("w")
+    (run_dir / "manifest.json").write_text(json.dumps({
+        "format": TRAINING_RUN_MANIFEST_FORMAT, "run_id": "run_001",
+        "classes": ["inhale"],
+        "artifact": {"path": "${WS}/training-runs/run_001/model.ckpt"},
+    }))
+    # Neutral resolution context: no CJM_WORKSPACE, cwd outside any workspace
+    monkeypatch.delenv("CJM_WORKSPACE", raising=False)
+    neutral = tmp_path / "neutral"
+    neutral.mkdir()
+    monkeypatch.chdir(neutral)
+    with pytest.raises(CapabilityInputError):
+        load_training_run(run_dir)  # doubled primary candidate, no fallback
+    resolved, checkpoint = load_training_run(run_dir, workspace=Workspace(root=ws_root))
+    assert checkpoint == ckpt
+    assert resolved["run_id"] == "run_001"

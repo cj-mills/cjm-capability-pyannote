@@ -218,3 +218,16 @@ def test_eligible_spines_include_filter():
     assert _eligible_spines(manifest, ["sha256:aaaa"])
     assert _eligible_spines(manifest, ["cccc"]) == []
     assert _eligible_spines(manifest, ["dddd"]) == []
+
+
+def test_finetune_adapter_task_exposure_conventions():
+    """DEC c0378082: the adapter binds `Cls(capability_instance)` (worker binding
+    convention), carries the X_finetune task name paired with the
+    audio_event_detection task it trains for, and still types input errors."""
+    from cjm_capability_pyannote.propose import PyannoteAudioEventDetectionAdapter
+    assert PyannoteSegmentationFinetuneAdapter.task_name == "audio_event_detection_finetune"
+    assert PyannoteSegmentationFinetuneAdapter.task_name == (
+        PyannoteAudioEventDetectionAdapter.task_name + "_finetune")
+    a = PyannoteSegmentationFinetuneAdapter(object())
+    with pytest.raises(CapabilityInputError):
+        a.finetune("")

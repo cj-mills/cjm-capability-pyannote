@@ -11,7 +11,7 @@ requires-python = ">=3.12"
 license = {text = "Apache-2.0"}
 authors = [{name = "Christian J. Mills", email = "9126128+cj-mills@users.noreply.github.com"}]
 classifiers = ["Natural Language :: English", "Intended Audience :: Developers", "Development Status :: 3 - Alpha", "Programming Language :: Python :: 3", "Programming Language :: Python :: 3 :: Only"]
-dependencies = ['cjm-substrate>=0.0.58', 'cjm-capability-primitives>=0.0.12', 'cjm-substrate-torch-utils', 'pyannote.audio>=4.0']
+dependencies = ['cjm-substrate>=0.0.59', 'cjm-capability-primitives>=0.0.12', 'cjm-substrate-torch-utils', 'pyannote.audio>=4.0']
 
 [project.urls]
 Repository = "https://github.com/cj-mills/cjm-capability-pyannote"
