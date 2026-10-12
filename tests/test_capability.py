@@ -16,6 +16,7 @@ class _FakeSegment:
 
 class _FakeAnnotation:
     """Stands in for pyannote.core.Annotation: itertracks(yield_label=True)."""
+
     def __init__(self, tracks):
         self._tracks = tracks
 
@@ -26,6 +27,7 @@ class _FakeAnnotation:
 
 class _FakeOutput:
     """Stands in for the 4.x DiarizeOutput (bare Annotation = the 3.x shape)."""
+
     def __init__(self, annotation):
         self.speaker_diarization = annotation
 

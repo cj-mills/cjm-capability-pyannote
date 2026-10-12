@@ -102,6 +102,7 @@ class TrainingRunManifest:
     record — identity = run id + content hash, recorded not path-encoded
     (DEC e047beee); promotion to the system model cache copies the run
     directory, manifest included."""
+
     run_id: str              # Unique training-run identifier (sortable, run-id pattern)
     created_at: float        # Unix timestamp at run start
     config: Dict[str, Any]   # Hyperparameter snapshot (FinetuneConfig as dict)

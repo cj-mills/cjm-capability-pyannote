@@ -65,6 +65,7 @@ class ProposalSetManifest:
     unmarked — the bench joins THIS set against final spine state, so the set
     itself must record exactly what was proposed, from which model, over which
     window, at which thresholds."""
+
     proposal_set_id: str     # Unique proposal-set identifier (sortable, run-id pattern)
     created_at: float        # Unix timestamp at generation start
     config: Dict[str, Any]   # Threshold/window snapshot (ProposeConfig as dict)
