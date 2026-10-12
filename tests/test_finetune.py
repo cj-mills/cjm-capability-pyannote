@@ -2,14 +2,15 @@
 selection, spine-file building (windows, real-only holdout, negative
 semantics), config plumbing, and typed errors (model-free: no training run;
 the real recipe exercises via the dev runner off a real dataset)."""
+
 import json
 
 import pytest
-
-from cjm_capability_pyannote.finetune import (_build_spine_files, _DatasetProtocol, _eligible_spines,
-                                              encounter_class_order, FinetuneConfig, load_dataset,
-                                              new_training_run_id, PyannoteSegmentationFinetuneAdapter,
-                                              run_finetune, select_classes, TrainingRunManifest)
+from cjm_capability_pyannote.finetune import (_build_spine_files, _DatasetProtocol,
+                                              _eligible_spines, encounter_class_order,
+                                              FinetuneConfig, load_dataset, new_training_run_id,
+                                              PyannoteSegmentationFinetuneAdapter, run_finetune,
+                                              select_classes, TrainingRunManifest)
 from cjm_substrate.core.errors import CapabilityInputError
 from cjm_substrate.core.workspace import Workspace
 

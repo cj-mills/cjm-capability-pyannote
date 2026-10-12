@@ -5,6 +5,7 @@ Manual by design (GPU + gated HF model + network on first pull):
     python tests_manual/real_model_smoke.py <audio-path> [num_speakers]
 
 Prints the turn list + metadata; success = typed turns with >=1 cluster."""
+
 import sys
 import time
 

@@ -1,8 +1,8 @@
 """Tests for the pyannote diarization capability — config plumbing, input
 validation, protocol conformance, and the turn-mapping contract (model-free:
 the pipeline is faked; the real gated model exercises via tests_manual/)."""
-import pytest
 
+import pytest
 from cjm_capability_primitives.speaker_diarization import SpeakerDiarizationResult
 from cjm_capability_pyannote.capability import PyannoteConfig, PyannoteDiarizationCapability
 from cjm_speaker_diarization_adapter_interface.adapter import SpeakerDiarizationToolProtocol

@@ -1,10 +1,10 @@
 """Tests for proposal generation — the hysteresis span fold, manifest shape,
 and typed input errors (model-free: no inference run; the real recipe
 exercises via the dev runner off a real training run)."""
+
 import json
 
 import pytest
-
 from cjm_capability_pyannote.propose import (load_training_run, new_proposal_set_id,
                                              ProposalSetManifest, ProposeConfig, run_propose,
                                              spans_from_scores, tier2_extras)
